@@ -1,16 +1,17 @@
 import 'dart:async';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
 import '../../widgets/shared_widgets.dart';
+import '../../services/shield_service.dart';
 
 class ShieldScreen extends ConsumerStatefulWidget {
   const ShieldScreen({super.key});
-
   @override
   ConsumerState<ShieldScreen> createState() => _ShieldScreenState();
 }
@@ -19,27 +20,113 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseCtrl;
   late Animation<double>    _pulseAnim;
-  bool  _fakeCallRinging = false;
-  Timer? _countdownTimer;
-  int    _secondsRemaining = 0;
-  bool   _timerRunning     = false;
+
+  bool     _fakeCallRinging    = false;
+  Timer?   _countdownTimer;
+  int      _secondsRemaining   = 0;
+  bool     _timerRunning       = false;
+  bool     _sendingAlert       = false;
+  Position? _lastPosition;
+  StreamSubscription<Position>? _locationSub;
+  bool     _recordingStarted   = false;
 
   @override
   void initState() {
     super.initState();
-    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.95, end: 1.05).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+    _pulseCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 2))
+      ..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.95, end: 1.05).animate(
+        CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
+    // Request all permissions on screen load
+    _requestPermissions();
   }
 
   @override
   void dispose() {
     _pulseCtrl.dispose();
     _countdownTimer?.cancel();
+    _locationSub?.cancel();
     FlutterRingtonePlayer().stop();
+    if (ShieldService.isRecording) ShieldService.stopRecording();
     super.dispose();
   }
 
-  // ── Timer ─────────────────────────────────────────────────────────────────
+  Future<void> _requestPermissions() async {
+    await ShieldService.requestAllPermissions();
+  }
+
+  // ── Activate shield ────────────────────────────────────────────────────────
+  Future<void> _activateShield() async {
+    HapticFeedback.heavyImpact();
+    final shield = ref.read(shieldProvider);
+    ref.read(shieldProvider.notifier).activate();
+
+    // Start GPS tracking
+    _startLocationTracking();
+
+    // Start recording
+    final recordingStarted = await ShieldService.startRecording();
+    setState(() => _recordingStarted = recordingStarted);
+
+    // Start countdown
+    _startCountdown(shield.checkInMinutes);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            'Shield active — GPS ${_lastPosition != null ? "tracking" : "acquiring"}'
+                '${recordingStarted ? ", recording" : ""}'),
+        backgroundColor: SakhiColors.sage,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ));
+    }
+  }
+
+  // ── Deactivate shield ──────────────────────────────────────────────────────
+  Future<void> _deactivateShield() async {
+    HapticFeedback.heavyImpact();
+    ref.read(shieldProvider.notifier).deactivate();
+    _stopCountdown();
+    _locationSub?.cancel();
+
+    // Stop recording and show where it was saved
+    final path = await ShieldService.stopRecording();
+    setState(() => _recordingStarted = false);
+
+    if (mounted && path != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Recording saved to device'),
+        backgroundColor: SakhiColors.deep,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ));
+    }
+  }
+
+  void _toggleShield() {
+    final shield = ref.read(shieldProvider);
+    if (shield.isActive) {
+      _deactivateShield();
+    } else {
+      _activateShield();
+    }
+  }
+
+  // ── Location tracking ──────────────────────────────────────────────────────
+  void _startLocationTracking() {
+    _locationSub?.cancel();
+    _locationSub = ShieldService.getLiveLocationStream().listen(
+          (position) => setState(() => _lastPosition = position),
+      onError: (e) => debugPrint('Location stream error: $e'),
+    );
+    // Also get immediate fix
+    ShieldService.getCurrentLocation().then((pos) {
+      if (pos != null && mounted) setState(() => _lastPosition = pos);
+    });
+  }
+
+  // ── Countdown timer ────────────────────────────────────────────────────────
   void _startCountdown(int minutes) {
     _countdownTimer?.cancel();
     setState(() { _secondsRemaining = minutes * 60; _timerRunning = true; });
@@ -51,7 +138,8 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
         } else {
           _timerRunning = false;
           timer.cancel();
-          _triggerAlert(autoTriggered: true);
+          // Timer expired — send alert automatically, no popup
+          _sendAlertAutomatically();
         }
       });
     });
@@ -62,113 +150,53 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
     setState(() { _timerRunning = false; _secondsRemaining = 0; });
   }
 
-  // ── Send SMS alert to all contacts ────────────────────────────────────────
-  Future<void> _sendSmsAlert({required String reason}) async {
+  // ── Auto-send when timer expires ───────────────────────────────────────────
+  Future<void> _sendAlertAutomatically() async {
+    HapticFeedback.heavyImpact();
     final contacts = ref.read(shieldProvider).emergencyContacts;
 
-    if (contacts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('No emergency contacts added — go to Shield and add contacts first'),
-        backgroundColor: Colors.red,
-        behavior: SnackBarBehavior.floating,
-      ));
-      return;
-    }
+    // Send immediately with no popup
+    await _doSendAlert('Check-in timer expired. I may need help. Last known location:');
 
-    final message = Uri.encodeComponent(
-        'SAKHI ALERT: $reason\n'
-            'This is an automated safety alert from the Sakhi app.\n'
-            'Please check on me immediately.'
-    );
-
-    // Send to each contact one by one
-    for (final contact in contacts) {
-      // Strip spaces from phone numbers
-      final number = contact.replaceAll(' ', '');
-      final uri    = Uri.parse('sms:$number?body=$message');
-
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-        // Small delay between opening SMS for each contact
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-    }
-  }
-
-  // ── Alert dialogs ─────────────────────────────────────────────────────────
-  void _triggerAlert({bool autoTriggered = false}) {
-    HapticFeedback.heavyImpact();
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        backgroundColor: Colors.red.shade50,
-        title: const Row(children: [
-          Icon(Icons.warning_rounded, color: Colors.red),
-          SizedBox(width: 8),
-          Text('Alert triggered!', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700)),
-        ]),
-        content: Text(
-            autoTriggered
-                ? 'Your check-in timer expired. Send an alert to your emergency contacts now?'
-                : 'Send an emergency alert to your contacts?',
-            style: const TextStyle(height: 1.5)),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () async {
-              Navigator.pop(context);
-              await _sendSmsAlert(reason: autoTriggered
-                  ? 'Check-in timer expired. I may need help.'
-                  : 'I pressed the emergency button. I need help.');
-              final shield = ref.read(shieldProvider);
-              if (shield.isActive) _startCountdown(shield.checkInMinutes);
-            },
-            child: const Text("Send alert now", style: TextStyle(color: Colors.white)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              if (autoTriggered) {
-                final shield = ref.read(shieldProvider);
-                if (shield.isActive) _startCountdown(shield.checkInMinutes);
-              }
-            },
-            child: const Text("I'm safe — dismiss"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Toggle shield ─────────────────────────────────────────────────────────
-  void _toggleShield() {
-    HapticFeedback.heavyImpact();
+    // Restart timer
     final shield = ref.read(shieldProvider);
-    if (shield.isActive) {
-      ref.read(shieldProvider.notifier).deactivate();
-      _stopCountdown();
-    } else {
-      ref.read(shieldProvider.notifier).activate();
+    if (shield.isActive && mounted) {
       _startCountdown(shield.checkInMinutes);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Shield activated — timer set for ${shield.checkInMinutes} minutes'),
-        backgroundColor: SakhiColors.sage,
+        content: Text(contacts.isEmpty
+            ? 'Timer expired — add emergency contacts to send alerts'
+            : 'Alert sent to ${contacts.length} contact${contacts.length > 1 ? "s" : ""} — timer restarted'),
+        backgroundColor: contacts.isEmpty ? Colors.orange : Colors.red,
         behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ));
     }
   }
 
-  // ── Fake call with ringtone ───────────────────────────────────────────────
+  // ── Manual "I am not safe" button ─────────────────────────────────────────
+  Future<void> _onNotSafePressed() async {
+    HapticFeedback.heavyImpact();
+    // Send immediately — no confirmation dialog, no delay
+    await _doSendAlert('I pressed the emergency button. I need help. My location:');
+  }
+
+  // ── Core send logic ────────────────────────────────────────────────────────
+  Future<void> _doSendAlert(String reason) async {
+    if (_sendingAlert) return;
+    setState(() => _sendingAlert = true);
+
+    final contacts = ref.read(shieldProvider).emergencyContacts;
+    await ShieldService.sendEmergencySms(contacts: contacts, reason: reason);
+
+    if (mounted) setState(() => _sendingAlert = false);
+  }
+
+  // ── Fake call ──────────────────────────────────────────────────────────────
   void _triggerFakeCall() {
     setState(() => _fakeCallRinging = true);
     HapticFeedback.mediumImpact();
-    // Play system ringtone
-    FlutterRingtonePlayer().playRingtone(
-      looping: true,
-      volume:  1.0,
-    );
+    FlutterRingtonePlayer().playRingtone(looping: true, volume: 1.0);
   }
 
   void _dismissFakeCall() {
@@ -187,25 +215,34 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
     final shield = ref.watch(shieldProvider);
     return Scaffold(
       backgroundColor: SakhiColors.vblush,
-      appBar: AppBar(title: const Text('Sakhi Shield'), actions: [
-        IconButton(icon: const Icon(Icons.settings_outlined), onPressed: () => _showSettings(context)),
-      ]),
+      appBar: AppBar(
+        title: const Text('Sakhi Shield'),
+        actions: [IconButton(icon: const Icon(Icons.settings_outlined), onPressed: () => _showSettings(context))],
+      ),
       body: Stack(children: [
         SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(children: [
-            if (shield.isActive) _StatusBanner(activatedAt: shield.activatedAt!),
+
+            // Status banner
+            if (shield.isActive) _StatusBanner(
+              activatedAt:    shield.activatedAt!,
+              position:       _lastPosition,
+              isRecording:    _recordingStarted,
+            ),
             const SizedBox(height: 12),
 
+            // Shield button
             _ShieldButton(isActive: shield.isActive, pulseAnim: _pulseAnim, onToggle: _toggleShield),
             const SizedBox(height: 16),
 
-            // ── I AM NOT SAFE button — always visible when shield is active ──
+            // NOT SAFE button — no popup, sends immediately
             if (shield.isActive)
-              _NotSafeButton(onPressed: () => _triggerAlert(autoTriggered: false)),
+              _NotSafeButton(sending: _sendingAlert, onPressed: _onNotSafePressed),
 
             const SizedBox(height: 8),
 
+            // Countdown
             if (shield.isActive && _timerRunning)
               _CountdownCard(
                 display:   _timerDisplay,
@@ -233,10 +270,13 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
             const SizedBox(height: 20),
 
             if (!shield.isActive)
-              _CheckInTimer(minutes: shield.checkInMinutes, onChanged: (v) => ref.read(shieldProvider.notifier).setCheckIn(v)),
+              _CheckInTimer(
+                minutes:   shield.checkInMinutes,
+                onChanged: (v) => ref.read(shieldProvider.notifier).setCheckIn(v),
+              ),
             const SizedBox(height: 20),
 
-            // ── Fake call card ─────────────────────────────────────────────
+            // Fake call card
             SakhiCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Row(children: [
                 Icon(Icons.call, color: SakhiColors.sage, size: 20),
@@ -244,7 +284,7 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
                 Text('Fake call', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
               ]),
               const SizedBox(height: 6),
-              const Text("Makes your phone ring like a real incoming call so you can safely exit a situation.", style: TextStyle(fontSize: 13, color: SakhiColors.lgray, height: 1.5)),
+              const Text("Makes your phone ring like a real call so you can safely exit a situation.", style: TextStyle(fontSize: 13, color: SakhiColors.lgray, height: 1.5)),
               const SizedBox(height: 14),
               SakhiGradientButton(label: 'Trigger fake call', icon: Icons.phone, onTap: _triggerFakeCall),
             ])),
@@ -265,49 +305,125 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
   }
 }
 
-// ── I am not safe button ──────────────────────────────────────────────────────
+// ── Not safe button ───────────────────────────────────────────────────────────
 class _NotSafeButton extends StatelessWidget {
+  final bool sending;
   final VoidCallback onPressed;
-  const _NotSafeButton({required this.onPressed});
+  const _NotSafeButton({required this.sending, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onPressed,
+      onTap: sending ? null : onPressed,
       child: Container(
-        width:   double.infinity,
+        width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 18),
-        margin:  const EdgeInsets.only(bottom: 12),
+        margin: const EdgeInsets.only(bottom: 12),
         decoration: BoxDecoration(
-          color:        Colors.red,
+          color: sending ? Colors.red.shade300 : Colors.red,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color:       Colors.red.withOpacity(0.4),
-              blurRadius:  20,
-              spreadRadius: 2,
-              offset:      const Offset(0, 4),
-            ),
-          ],
+          boxShadow: [BoxShadow(color: Colors.red.withOpacity(0.4), blurRadius: 20, spreadRadius: 2, offset: const Offset(0, 4))],
         ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.warning_rounded, color: Colors.white, size: 22),
-            SizedBox(width: 10),
-            Text(
-              'I AM NOT SAFE — SEND ALERT',
-              style: TextStyle(
-                color:         Colors.white,
-                fontSize:      15,
-                fontWeight:    FontWeight.w800,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
-        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          if (sending)
+            const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+          else
+            const Icon(Icons.warning_rounded, color: Colors.white, size: 22),
+          const SizedBox(width: 10),
+          Text(
+            sending ? 'SENDING ALERT...' : 'I AM NOT SAFE — SEND ALERT',
+            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 0.5),
+          ),
+        ]),
       ),
     );
+  }
+}
+
+// ── Status banner with GPS ────────────────────────────────────────────────────
+class _StatusBanner extends StatelessWidget {
+  final DateTime  activatedAt;
+  final Position? position;
+  final bool      isRecording;
+  const _StatusBanner({required this.activatedAt, this.position, required this.isRecording});
+
+  @override
+  Widget build(BuildContext context) {
+    final mins    = DateTime.now().difference(activatedAt).inMinutes;
+    final hasGps  = position != null;
+    final lat     = position?.latitude.toStringAsFixed(4) ?? '...';
+    final lng     = position?.longitude.toStringAsFixed(4) ?? '...';
+
+    return Container(
+      width: double.infinity, padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: SakhiColors.sage.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: SakhiColors.sage)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.shield, color: SakhiColors.sage, size: 18),
+          const SizedBox(width: 8),
+          const Text('Shield is active', style: TextStyle(color: SakhiColors.sage, fontWeight: FontWeight.w700, fontSize: 14)),
+          const Spacer(),
+          Text('${mins}m', style: const TextStyle(color: SakhiColors.sage, fontSize: 12)),
+        ]),
+        const SizedBox(height: 8),
+        // GPS status
+        Row(children: [
+          Icon(hasGps ? Icons.location_on : Icons.location_searching,
+              color: hasGps ? SakhiColors.sage : SakhiColors.gold, size: 14),
+          const SizedBox(width: 5),
+          Text(
+              hasGps ? 'GPS: $lat, $lng' : 'Acquiring GPS...',
+              style: TextStyle(color: hasGps ? SakhiColors.sage : SakhiColors.gold, fontSize: 11)),
+        ]),
+        const SizedBox(height: 4),
+        // Recording status
+        Row(children: [
+          Icon(isRecording ? Icons.fiber_manual_record : Icons.fiber_manual_record_outlined,
+              color: isRecording ? Colors.red : SakhiColors.lgray, size: 14),
+          const SizedBox(width: 5),
+          Text(
+              isRecording ? 'Recording video + audio' : 'Recording unavailable',
+              style: TextStyle(color: isRecording ? Colors.red : SakhiColors.lgray, fontSize: 11)),
+        ]),
+      ]),
+    );
+  }
+}
+
+// ── Shield button ─────────────────────────────────────────────────────────────
+class _ShieldButton extends StatelessWidget {
+  final bool isActive;
+  final Animation<double> pulseAnim;
+  final VoidCallback onToggle;
+  const _ShieldButton({required this.isActive, required this.pulseAnim, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      ScaleTransition(
+        scale: isActive ? pulseAnim : const AlwaysStoppedAnimation(1.0),
+        child: GestureDetector(
+          onTap: onToggle,
+          child: Container(
+            width: 160, height: 160,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive ? SakhiColors.sage : SakhiColors.deep,
+              boxShadow: [BoxShadow(color: (isActive ? SakhiColors.sage : SakhiColors.rose).withOpacity(0.4), blurRadius: 30, spreadRadius: isActive ? 10 : 0)],
+            ),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(isActive ? Icons.shield : Icons.shield_outlined, color: Colors.white, size: 56),
+              const SizedBox(height: 8),
+              Text(isActive ? 'ACTIVE' : 'ACTIVATE',
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+            ]),
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      Text(isActive ? 'Tap to deactivate Shield' : 'Activate before you feel unsafe — not during',
+          style: const TextStyle(fontSize: 13, color: SakhiColors.lgray), textAlign: TextAlign.center),
+    ]);
   }
 }
 
@@ -350,66 +466,9 @@ class _CountdownCard extends StatelessWidget {
           child: const Text("I'm safe — reset timer", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
         )),
         const SizedBox(height: 8),
-        const Text("Tap before 00:00 to confirm you're safe.", style: TextStyle(fontSize: 11, color: SakhiColors.lgray), textAlign: TextAlign.center),
+        const Text("Tap before 00:00 — alert sends automatically when timer expires.", style: TextStyle(fontSize: 11, color: SakhiColors.lgray), textAlign: TextAlign.center),
       ]),
     );
-  }
-}
-
-// ── Status banner ─────────────────────────────────────────────────────────────
-class _StatusBanner extends StatelessWidget {
-  final DateTime activatedAt;
-  const _StatusBanner({required this.activatedAt});
-  @override
-  Widget build(BuildContext context) {
-    final mins = DateTime.now().difference(activatedAt).inMinutes;
-    return Container(
-      width: double.infinity, padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: SakhiColors.sage.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: SakhiColors.sage)),
-      child: Row(children: [
-        const Icon(Icons.shield, color: SakhiColors.sage, size: 20),
-        const SizedBox(width: 10),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Shield is active', style: TextStyle(color: SakhiColors.sage, fontWeight: FontWeight.w700, fontSize: 14)),
-          Text('Active for $mins min', style: const TextStyle(color: SakhiColors.sage, fontSize: 11)),
-        ])),
-      ]),
-    );
-  }
-}
-
-// ── Shield button ─────────────────────────────────────────────────────────────
-class _ShieldButton extends StatelessWidget {
-  final bool isActive;
-  final Animation<double> pulseAnim;
-  final VoidCallback onToggle;
-  const _ShieldButton({required this.isActive, required this.pulseAnim, required this.onToggle});
-  @override
-  Widget build(BuildContext context) {
-    return Column(children: [
-      ScaleTransition(
-        scale: isActive ? pulseAnim : const AlwaysStoppedAnimation(1.0),
-        child: GestureDetector(
-          onTap: onToggle,
-          child: Container(
-            width: 160, height: 160,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: isActive ? SakhiColors.sage : SakhiColors.deep,
-              boxShadow: [BoxShadow(color: (isActive ? SakhiColors.sage : SakhiColors.rose).withOpacity(0.4), blurRadius: 30, spreadRadius: isActive ? 10 : 0)],
-            ),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(isActive ? Icons.shield : Icons.shield_outlined, color: Colors.white, size: 56),
-              const SizedBox(height: 8),
-              Text(isActive ? 'ACTIVE' : 'ACTIVATE', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-            ]),
-          ),
-        ),
-      ),
-      const SizedBox(height: 14),
-      Text(isActive ? 'Tap to deactivate Shield' : 'Activate before you feel unsafe — not during',
-          style: const TextStyle(fontSize: 13, color: SakhiColors.lgray), textAlign: TextAlign.center),
-    ]);
   }
 }
 
@@ -419,11 +478,11 @@ class _HowItWorks extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final steps = [
-      ('🛡️', 'Activate before you feel unsafe — walking to your cab, leaving late from work'),
-      ('📹', 'Camera and mic start recording silently with no visible change to your screen'),
-      ('📍', 'Your live location is shared with your emergency contacts in real time'),
-      ('☁️', 'Footage uploads immediately to encrypted cloud — safe even if your phone is taken'),
-      ('⏱️', 'If you don\'t tap "I\'m safe" in time, contacts are automatically alerted'),
+      ('🛡️', 'Activate before you feel unsafe — the app starts GPS tracking and recording immediately'),
+      ('📹', 'Video and audio recording starts silently and saves to your device'),
+      ('📍', 'Your live GPS coordinates are tracked and included in every alert message'),
+      ('⏱️', 'If the timer hits zero, an SMS with your location is sent automatically — no button needed'),
+      ('🆘', 'Tap "I am not safe" at any time to send an immediate SMS alert with your location'),
     ];
     return SakhiCard(
       color: SakhiColors.blush,
@@ -451,7 +510,7 @@ class _EmergencyContacts extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return SakhiCard(child: Column(children: [
       if (contacts.isEmpty)
-        const SakhiEmptyState(emoji: '👥', title: 'No contacts yet', subtitle: 'Add up to 3 emergency contacts'),
+        const SakhiEmptyState(emoji: '👥', title: 'No contacts yet', subtitle: 'Add up to 3 phone numbers'),
       ...contacts.map((c) => ListTile(
         contentPadding: EdgeInsets.zero,
         leading: const CircleAvatar(backgroundColor: SakhiColors.blush, child: Icon(Icons.person, color: SakhiColors.rose)),
@@ -459,14 +518,18 @@ class _EmergencyContacts extends ConsumerWidget {
         trailing: IconButton(icon: const Icon(Icons.close, size: 18, color: SakhiColors.lgray), onPressed: () => ref.read(shieldProvider.notifier).removeContact(c)),
       )),
       if (contacts.length < 3)
-        TextButton.icon(icon: const Icon(Icons.add, color: SakhiColors.rose), label: const Text('Add contact', style: TextStyle(color: SakhiColors.rose)), onPressed: () => _showAdd(context, ref)),
+        TextButton.icon(icon: const Icon(Icons.add, color: SakhiColors.rose), label: const Text('Add phone number', style: TextStyle(color: SakhiColors.rose)), onPressed: () => _showAdd(context, ref)),
     ]));
   }
   void _showAdd(BuildContext context, WidgetRef ref) {
     final ctrl = TextEditingController();
     showDialog(context: context, builder: (_) => AlertDialog(
       title: const Text('Add emergency contact'),
-      content: TextField(controller: ctrl, keyboardType: TextInputType.phone, decoration: const InputDecoration(hintText: 'Phone number (e.g. +91 98765 43210)')),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: ctrl, keyboardType: TextInputType.phone, decoration: const InputDecoration(hintText: '+91 98765 43210', labelText: 'Phone number')),
+        const SizedBox(height: 8),
+        const Text('Enter the phone number including country code. Alerts will be sent as SMS directly to this number.', style: TextStyle(fontSize: 11, color: SakhiColors.lgray, height: 1.5)),
+      ]),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         ElevatedButton(onPressed: () { if (ctrl.text.isNotEmpty) { ref.read(shieldProvider.notifier).addContact(ctrl.text); Navigator.pop(context); } }, child: const Text('Add')),
@@ -482,11 +545,11 @@ class _CheckInTimer extends StatelessWidget {
   const _CheckInTimer({required this.minutes, required this.onChanged});
   @override
   Widget build(BuildContext context) {
-    final options = [10, 15, 30, 45];
+    final options = [15, 30, 45, 60];
     return SakhiCard(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('Check-in timer', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
       const SizedBox(height: 4),
-      const Text("If you don't tap \"I'm safe\" before the timer hits zero, your contacts are alerted.", style: TextStyle(fontSize: 12, color: SakhiColors.lgray, height: 1.5)),
+      const Text("SMS alert sends automatically when timer hits zero — no button needed.", style: TextStyle(fontSize: 12, color: SakhiColors.lgray, height: 1.5)),
       const SizedBox(height: 12),
       Row(children: options.map((m) {
         final selected = m == minutes;
@@ -567,8 +630,9 @@ class _ShieldSettings extends StatelessWidget {
       child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Shield settings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
         const SizedBox(height: 20),
-        SwitchListTile(contentPadding: EdgeInsets.zero, value: true, onChanged: (_) {}, title: const Text('Share location continuously'), subtitle: const Text('While Shield is active'), activeColor: SakhiColors.rose),
-        SwitchListTile(contentPadding: EdgeInsets.zero, value: true, onChanged: (_) {}, title: const Text('Auto-upload to cloud'), subtitle: const Text('Recordings saved even if phone is taken'), activeColor: SakhiColors.rose),
+        SwitchListTile(contentPadding: EdgeInsets.zero, value: true, onChanged: (_) {}, title: const Text('Share location in alerts'), subtitle: const Text('GPS coordinates included in every SMS'), activeColor: SakhiColors.rose),
+        SwitchListTile(contentPadding: EdgeInsets.zero, value: true, onChanged: (_) {}, title: const Text('Auto-send on timer expiry'), subtitle: const Text('No confirmation needed'), activeColor: SakhiColors.rose),
+        SwitchListTile(contentPadding: EdgeInsets.zero, value: true, onChanged: (_) {}, title: const Text('Record video + audio'), subtitle: const Text('Saved to device storage'), activeColor: SakhiColors.rose),
         const SizedBox(height: 16),
       ]),
     );
