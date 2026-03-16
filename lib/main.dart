@@ -7,12 +7,16 @@ import 'providers/providers.dart';
 import 'screens/onboarding/onboarding_screen.dart';
 import 'screens/settings/main_nav.dart';
 import 'services/storage_service.dart';
+import 'services/notification_service.dart';
+import 'services/background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialise Hive before app launches
   await StorageService.init();
+  await NotificationService.init();
+  await BackgroundService.init();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

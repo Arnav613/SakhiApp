@@ -9,28 +9,19 @@ import 'package:url_launcher/url_launcher.dart';
 class ShieldService {
   static CameraController? _cameraController;
   static bool _isRecording = false;
-  static String? _recordingPath;
 
-  // ── Request all permissions upfront ───────────────────────────────────────
-  static Future<Map<String, bool>> requestAllPermissions() async {
-    final results = await [
+  // ── Request all permissions ───────────────────────────────────────────────
+  static Future<void> requestAllPermissions() async {
+    await [
       Permission.location,
       Permission.camera,
       Permission.microphone,
-      Permission.sms,
       Permission.storage,
+      Permission.manageExternalStorage,
     ].request();
-
-    return {
-      'location':   results[Permission.location]!.isGranted,
-      'camera':     results[Permission.camera]!.isGranted,
-      'microphone': results[Permission.microphone]!.isGranted,
-      'sms':        results[Permission.sms]!.isGranted,
-      'storage':    results[Permission.storage]!.isGranted,
-    };
   }
 
-  // ── Get current GPS location ───────────────────────────────────────────────
+  // ── Get current GPS ───────────────────────────────────────────────────────
   static Future<Position?> getCurrentLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -53,58 +44,60 @@ class ShieldService {
     }
   }
 
-  // ── Send SMS automatically (Android only) ────────────────────────────────
-  static Future<bool> sendEmergencySms({
+  // ── Live location stream ──────────────────────────────────────────────────
+  static Stream<Position> getLiveLocationStream() {
+    return Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      ),
+    );
+  }
+
+  // ── Send WhatsApp alert ───────────────────────────────────────────────────
+  static Future<void> sendEmergencySms({
     required List<String> contacts,
     required String reason,
   }) async {
-    if (contacts.isEmpty) return false;
+    if (contacts.isEmpty) return;
 
     final position = await getCurrentLocation();
     String locationText;
     if (position != null) {
       final lat = position.latitude.toStringAsFixed(6);
       final lng = position.longitude.toStringAsFixed(6);
-      locationText =
-      'My live location: https://maps.google.com/?q=$lat,$lng';
+      locationText = 'https://maps.google.com/?q=$lat,$lng';
     } else {
-      locationText = 'Location unavailable — please track my phone.';
+      locationText = 'Location unavailable';
     }
 
     final message =
         '🚨 SAKHI EMERGENCY ALERT 🚨\n'
         '$reason\n\n'
-        '$locationText\n\n'
-        'This is an automated alert from the Sakhi safety app.\n'
-        'Please check on me immediately.';
+        'My location: $locationText\n\n'
+        'Sent from Sakhi safety app. Please check on me immediately.';
 
-    // Build a single SMS URI with all numbers separated by semicolons
-    final numbers  = contacts.map((c) => c.replaceAll(' ', '')).join(';');
-    final encoded  = Uri.encodeComponent(message);
-    final uri      = Uri.parse('sms:$numbers?body=$encoded');
-
-    try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-        return true;
+    for (final contact in contacts) {
+      final number  = contact.replaceAll(RegExp(r'[\s\-\(\)]'), '');
+      final encoded = Uri.encodeComponent(message);
+      final uri     = Uri.parse('https://wa.me/$number?text=$encoded');
+      try {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        await Future.delayed(const Duration(milliseconds: 800));
+      } catch (e) {
+        debugPrint('WhatsApp error for $number: $e');
       }
-      return false;
-    } catch (e) {
-      debugPrint('SMS error: $e');
-      return false;
     }
   }
 
-  // ── Start video + audio recording ─────────────────────────────────────────
+  // ── Start recording ───────────────────────────────────────────────────────
   static Future<bool> startRecording() async {
     try {
       if (_isRecording) return true;
 
-      // Get available cameras
       final cameras = await availableCameras();
       if (cameras.isEmpty) return false;
 
-      // Use front camera if available, otherwise rear
       final camera = cameras.firstWhere(
             (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
@@ -112,73 +105,89 @@ class ShieldService {
 
       _cameraController = CameraController(
         camera,
-        ResolutionPreset.medium,
-        enableAudio:    true,
-        imageFormatGroup: ImageFormatGroup.yuv420,
+        ResolutionPreset.low,
+        enableAudio: true,
       );
 
       await _cameraController!.initialize();
-
-      // Get save path
-      final dir       = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      _recordingPath  = '${dir.path}/sakhi_shield_$timestamp.mp4';
-
+      await _cameraController!.prepareForVideoRecording();
       await _cameraController!.startVideoRecording();
       _isRecording = true;
 
-      debugPrint('Shield recording started: $_recordingPath');
+      debugPrint('Recording started');
       return true;
     } catch (e) {
       debugPrint('Recording start error: $e');
+      _isRecording = false;
+      _cameraController = null;
       return false;
     }
   }
 
-  // ── Stop recording and save to device ─────────────────────────────────────
+  // ── Stop recording — saves to DCIM so gallery can see it ─────────────────
   static Future<String?> stopRecording() async {
     try {
       if (!_isRecording || _cameraController == null) return null;
+      if (!_cameraController!.value.isRecordingVideo) return null;
 
-      final file = await _cameraController!.stopVideoRecording();
+      final xFile = await _cameraController!.stopVideoRecording();
       _isRecording = false;
-
-      // Save to the path we set
-      if (_recordingPath != null) {
-        await file.saveTo(_recordingPath!);
-        debugPrint('Shield recording saved to: $_recordingPath');
-      }
 
       await _cameraController!.dispose();
       _cameraController = null;
 
-      return _recordingPath;
+      // Save to DCIM/Sakhi — this appears in the gallery
+      String? savePath;
+      try {
+        final dcim      = Directory('/storage/emulated/0/DCIM/Sakhi');
+        if (!await dcim.exists()) await dcim.create(recursive: true);
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        savePath        = '${dcim.path}/sakhi_$timestamp.mp4';
+        await File(xFile.path).copy(savePath);
+        debugPrint('Saved to DCIM: $savePath');
+      } catch (e) {
+        // Fallback to external storage root
+        debugPrint('DCIM save failed, trying external: $e');
+        try {
+          final ext = await getExternalStorageDirectory();
+          if (ext != null) {
+            final timestamp = DateTime.now().millisecondsSinceEpoch;
+            savePath        = '${ext.path}/sakhi_$timestamp.mp4';
+            await File(xFile.path).copy(savePath);
+            debugPrint('Saved to external: $savePath');
+          }
+        } catch (e2) {
+          // Final fallback — app documents
+          debugPrint('External failed, using app docs: $e2');
+          final docs      = await getApplicationDocumentsDirectory();
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          savePath        = '${docs.path}/sakhi_$timestamp.mp4';
+          await File(xFile.path).copy(savePath);
+          debugPrint('Saved to app docs: $savePath');
+        }
+      }
+
+      // Tell Android media scanner about the new file so gallery picks it up
+      if (savePath != null && Platform.isAndroid) {
+        try {
+          await Process.run('am', [
+            'broadcast',
+            '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
+            '-d', 'file://$savePath',
+          ]);
+        } catch (_) {}
+      }
+
+      return savePath;
     } catch (e) {
-      debugPrint('Recording stop error: $e');
+      debugPrint('Stop recording error: $e');
+      try { await _cameraController?.dispose(); } catch (_) {}
+      _cameraController = null;
+      _isRecording = false;
       return null;
     }
   }
 
-  // ── Check if currently recording ──────────────────────────────────────────
   static bool get isRecording => _isRecording;
-
-  // ── Get camera preview widget (to show small indicator) ───────────────────
   static CameraController? get cameraController => _cameraController;
-
-  // ── Stream live location updates ──────────────────────────────────────────
-  static Stream<Position> getLiveLocationStream() {
-    return Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy:          LocationAccuracy.high,
-        distanceFilter:    10, // update every 10 metres
-      ),
-    );
-  }
-
-  // ── Format location as Google Maps link ───────────────────────────────────
-  static String formatLocationLink(Position position) {
-    final lat = position.latitude.toStringAsFixed(6);
-    final lng = position.longitude.toStringAsFixed(6);
-    return 'https://maps.google.com/?q=$lat,$lng';
-  }
 }

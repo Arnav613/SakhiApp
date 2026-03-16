@@ -27,6 +27,8 @@ dependencies:
   flutter_ringtone_player: ^4.0.0
   geolocator: ^11.0.0
   camera: ^0.10.5+9
+  flutter_local_notifications: ^17.2.3
+  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_test:

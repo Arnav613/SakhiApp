@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
-import '../services/calendar_service.dart';
 import '../services/storage_service.dart';
+import '../services/calendar_service.dart';
 
 // ── Cycle state ───────────────────────────────────────────────────────────────
 class CycleState {
@@ -34,7 +34,6 @@ class CycleState {
 
 class CycleNotifier extends StateNotifier<CycleState> {
   CycleNotifier() : super(_loadInitialState()) {
-    // Recalculate day from last period date on app open
     _recalculateDay();
   }
 
@@ -49,11 +48,11 @@ class CycleNotifier extends StateNotifier<CycleState> {
   }
 
   void _recalculateDay() {
-    final saved       = StorageService.getCycleData();
-    final dateStr     = saved['lastPeriodStart'] as String;
+    final saved   = StorageService.getCycleData();
+    final dateStr = saved['lastPeriodStart'] as String;
     if (dateStr.isEmpty) return;
-    final lastPeriod  = DateTime.parse(dateStr);
-    final day         = DateTime.now().difference(lastPeriod).inDays + 1;
+    final lastPeriod = DateTime.parse(dateStr);
+    final day        = DateTime.now().difference(lastPeriod).inDays + 1;
     CyclePhase phase;
     if (day <= 5)       phase = CyclePhase.menstrual;
     else if (day <= 13) phase = CyclePhase.follicular;
@@ -104,7 +103,7 @@ class CycleNotifier extends StateNotifier<CycleState> {
 }
 
 final cycleProvider = StateNotifierProvider<CycleNotifier, CycleState>(
-  (ref) => CycleNotifier(),
+      (ref) => CycleNotifier(),
 );
 
 // ── Shield state ──────────────────────────────────────────────────────────────
@@ -167,43 +166,33 @@ class ShieldNotifier extends StateNotifier<ShieldState> {
 }
 
 final shieldProvider = StateNotifierProvider<ShieldNotifier, ShieldState>(
-  (ref) => ShieldNotifier(),
+      (ref) => ShieldNotifier(),
 );
 
 // ── Chat messages ─────────────────────────────────────────────────────────────
 class ChatNotifier extends StateNotifier<List<ChatMessage>> {
   ChatNotifier() : super([
     ChatMessage(
-      text: "Good morning! You're on Day 14 — ovulatory phase. Communication is your superpower today. You have a team meeting at 10am. Walk in with confidence 🌸",
+      text: "Good morning! I'm Sakhi — your personal companion. I know your schedule, your cycle, and I'm here whenever you need me. How are you feeling today? 🌸",
       isUser: false,
-      time: DateTime.now().subtract(const Duration(minutes: 5)),
+      time: DateTime.now(),
     ),
   ]);
 
   void addMessage(String text, bool isUser) {
-    state = [
-      ...state,
-      ChatMessage(text: text, isUser: isUser, time: DateTime.now()),
-    ];
+    state = [...state, ChatMessage(text: text, isUser: isUser, time: DateTime.now())];
   }
 
   void addSakhiResponse(String text) {
-    state = [
-      ...state,
-      ChatMessage(text: text, isUser: false, time: DateTime.now()),
-    ];
+    state = [...state, ChatMessage(text: text, isUser: false, time: DateTime.now())];
   }
 }
 
 final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>(
-  (ref) => ChatNotifier(),
+      (ref) => ChatNotifier(),
 );
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-// ── Calendar-aware tasks provider ────────────────────────────────────────────
-final calendarLoadingProvider = StateProvider<bool>((ref) => false);
-final calendarPermissionProvider = StateProvider<bool>((ref) => false);
-
+// ── Tasks — loads from calendar ───────────────────────────────────────────────
 final tasksProvider = StateNotifierProvider<TasksNotifier, List<Task>>(
       (ref) => TasksNotifier(),
 );
@@ -214,8 +203,6 @@ class TasksNotifier extends StateNotifier<List<Task>> {
   }
 
   Future<void> _loadFromCalendar() async {
-    // Import this at top of providers.dart:
-    // import '../services/calendar_service.dart';
     final tasks = await CalendarService.getTodaysTasks();
     if (mounted) state = tasks;
   }
@@ -226,9 +213,7 @@ class TasksNotifier extends StateNotifier<List<Task>> {
   }
 
   void completeTask(String id) {
-    state = state.map((t) =>
-    t.id == id ? (t..completed = !t.completed) : t
-    ).toList();
+    state = state.map((t) => t.id == id ? (t..completed = !t.completed) : t).toList();
   }
 
   void rateTask(String id, int rating) {
@@ -238,7 +223,7 @@ class TasksNotifier extends StateNotifier<List<Task>> {
 
 // ── Resilience points ─────────────────────────────────────────────────────────
 final resilienceProvider = StateNotifierProvider<ResilienceNotifier, ResilienceData>(
-  (ref) => ResilienceNotifier(),
+      (ref) => ResilienceNotifier(),
 );
 
 class ResilienceNotifier extends StateNotifier<ResilienceData> {
@@ -288,7 +273,7 @@ class ResilienceNotifier extends StateNotifier<ResilienceData> {
 
 // ── Journal entries ───────────────────────────────────────────────────────────
 final journalProvider = StateNotifierProvider<JournalNotifier, List<JournalEntry>>(
-  (ref) => JournalNotifier(),
+      (ref) => JournalNotifier(),
 );
 
 class JournalNotifier extends StateNotifier<List<JournalEntry>> {

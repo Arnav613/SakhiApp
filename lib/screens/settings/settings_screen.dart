@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sakhi/models/models.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
 import '../../services/storage_service.dart';
+import '../../services/notification_service.dart';
+import '../../services/background_service.dart';
+import '../../services/notifications_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -20,6 +24,22 @@ class SettingsScreen extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
+            // ── Notifications ─────────────────────────────────────────
+            _SectionHeader('Notifications'),
+            _SettingsTile(
+              icon:  Icons.notifications_outlined,
+              title: 'Notifications',
+              value: 'Morning, evening & pre-task',
+              onTap: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const NotificationsScreen())),
+            ),
+            const SizedBox(height: 8),
+            _SectionHeader('Demo notifications'),
+            _TestNotificationButton(),
+            _TestEveningButton(),
+            _TestPreTaskButton(),
+            const SizedBox(height: 20),
 
             // ── Profile ───────────────────────────────────────────────
             _SectionHeader('Profile'),
@@ -225,7 +245,87 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-// ── Settings tile ─────────────────────────────────────────────────────────────
+// ── Test notification button ──────────────────────────────────────────────────
+class _TestNotificationButton extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_TestNotificationButton> createState() =>
+      _TestNotificationButtonState();
+}
+
+class _TestNotificationButtonState
+    extends ConsumerState<_TestNotificationButton> {
+  bool _sending = false;
+
+  Future<void> _sendTest() async {
+    setState(() => _sending = true);
+    try {
+      final cycle    = ref.read(cycleProvider);
+      final userName = ref.read(userNameProvider);
+      final lastNote = StorageService.getLastJournalNote();
+
+      // Generate a real Claude message
+      final message = await BackgroundService.generateMorningMessage(
+        userName:    userName,
+        cycle:       cycle,
+        lastJournal: lastNote,
+      );
+
+      // Fire immediately — no scheduling
+      await NotificationService.showNow(
+        id:    99,
+        title: 'Good morning 🌸',
+        body:  message,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Test notification sent — check your notification bar'),
+          backgroundColor: SakhiColors.sage,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Could not send — check your API key and internet'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: OutlinedButton.icon(
+        onPressed: _sending ? null : _sendTest,
+        style: OutlinedButton.styleFrom(
+          foregroundColor:  SakhiColors.rose,
+          side:             const BorderSide(color: SakhiColors.rose),
+          padding:          const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
+          shape:            RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+          minimumSize:      const Size(double.infinity, 0),
+        ),
+        icon: _sending
+            ? const SizedBox(
+            width: 16, height: 16,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: SakhiColors.rose))
+            : const Icon(Icons.notifications_active_outlined, size: 18),
+        label: Text(
+            _sending ? 'Generating with Claude...' : 'Send test morning notification',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+      ),
+    );
+  }
+}
 class _SettingsTile extends StatelessWidget {
   final IconData icon;
   final String   title;
@@ -260,14 +360,177 @@ class _SettingsTile extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 14, fontWeight: FontWeight.w500,
                         color: SakhiColors.deep))),
-            Text(value,
-                style: const TextStyle(fontSize: 13, color: SakhiColors.lgray)),
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 140),
+              child: Text(value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 13, color: SakhiColors.lgray)),
+            ),
             if (onTap != null) ...[
-              const SizedBox(width: 6),
+              const SizedBox(width: 4),
               const Icon(Icons.chevron_right, color: SakhiColors.lgray, size: 18),
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── Evening journal demo button ───────────────────────────────────────────────
+class _TestEveningButton extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_TestEveningButton> createState() => _TestEveningButtonState();
+}
+
+class _TestEveningButtonState extends ConsumerState<_TestEveningButton> {
+  bool _sending = false;
+
+  Future<void> _send() async {
+    setState(() => _sending = true);
+    try {
+      await NotificationService.showNow(
+        id:    98,
+        title: 'Time to journal 📖',
+        body:  'How did today go? Rate your tasks and jot down your thoughts — Sakhi will read it tonight.',
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Evening reminder sent — check your notification bar'),
+          backgroundColor: SakhiColors.sage,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Could not send notification'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: OutlinedButton.icon(
+        onPressed: _sending ? null : _send,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: SakhiColors.amber,
+          side:            const BorderSide(color: SakhiColors.amber),
+          padding:         const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
+          shape:           RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          minimumSize:     const Size(double.infinity, 0),
+        ),
+        icon: _sending
+            ? const SizedBox(width: 16, height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: SakhiColors.amber))
+            : const Icon(Icons.book_outlined, size: 18),
+        label: Text(
+            _sending ? 'Sending...' : 'Send test evening journal reminder',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+      ),
+    );
+  }
+}
+
+// ── Pre-task briefing demo button ─────────────────────────────────────────────
+class _TestPreTaskButton extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_TestPreTaskButton> createState() => _TestPreTaskButtonState();
+}
+
+class _TestPreTaskButtonState extends ConsumerState<_TestPreTaskButton> {
+  bool _sending = false;
+
+  Future<void> _send() async {
+    setState(() => _sending = true);
+    try {
+      final cycle    = ref.read(cycleProvider);
+      final tasks    = ref.read(tasksProvider);
+      final userName = ref.read(userNameProvider);
+
+      // Pick the next upcoming task or use a sample
+      final now         = DateTime.now();
+      final upcoming    = tasks.where((t) => t.time.isAfter(now)).toList();
+      final taskTitle   = upcoming.isNotEmpty ? upcoming.first.title : 'Your next meeting';
+
+      // Build phase-aware message
+      final phaseMsg = _phaseMessage(cycle.phase.label);
+
+      await NotificationService.showNow(
+        id:    97,
+        title: '$taskTitle in 30 minutes',
+        body:  phaseMsg,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Pre-task briefing sent for "$taskTitle"'),
+          backgroundColor: SakhiColors.sage,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('Could not send notification'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  String _phaseMessage(String phase) {
+    switch (phase.toLowerCase()) {
+      case 'menstrual':
+        return 'Your energy may be lower today — focus on what matters most and give yourself grace for the rest.';
+      case 'follicular':
+        return 'Your mind is sharp and creative right now. Great time to bring new ideas to the table.';
+      case 'ovulatory':
+        return 'Peak communication phase — walk in with confidence. This is your strongest window for high-stakes conversations.';
+      case 'luteal':
+        return 'Detail and analysis are your strengths right now. Trust your instincts on the specifics.';
+      default:
+        return 'You\'ve got this. Show up as you are — that\'s always enough.';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: OutlinedButton.icon(
+        onPressed: _sending ? null : _send,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: SakhiColors.sage,
+          side:            const BorderSide(color: SakhiColors.sage),
+          padding:         const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
+          shape:           RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          minimumSize:     const Size(double.infinity, 0),
+        ),
+        icon: _sending
+            ? const SizedBox(width: 16, height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: SakhiColors.sage))
+            : const Icon(Icons.calendar_today_outlined, size: 18),
+        label: Text(
+            _sending ? 'Sending...' : 'Send test pre-task briefing',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
       ),
     );
   }

@@ -6,16 +6,6 @@ class StorageService {
   static const String _journalBox  = 'journal';
   static const String _pointsBox   = 'points';
   static const String _settingsBox = 'settings';
-  static Future<void> saveEmergencyContacts(List<String> contacts) async {
-    final box = Hive.box(_settingsBox);
-    await box.put('emergencyContacts', contacts);
-  }
-
-  static List<String> getEmergencyContacts() {
-    final box = Hive.box(_settingsBox);
-    final raw = box.get('emergencyContacts', defaultValue: <String>[]);
-    return List<String>.from(raw as List);
-  }
 
   // ── Initialise Hive ───────────────────────────────────────────────────────
   static Future<void> init() async {
@@ -153,6 +143,43 @@ class StorageService {
   static String getLastCheckInMessage() {
     final box = Hive.box(_settingsBox);
     return box.get('lastCheckInMessage', defaultValue: '') as String;
+  }
+
+  // ── Notification settings ─────────────────────────────────────────────────
+  static Future<void> saveNotificationSettings(Map<String, dynamic> s) async {
+    final box = Hive.box(_settingsBox);
+    await box.put('notifMorningEnabled',  s['morningEnabled']);
+    await box.put('notifMorningHour',     s['morningHour']);
+    await box.put('notifMorningMinute',   s['morningMinute']);
+    await box.put('notifEveningEnabled',  s['eveningEnabled']);
+    await box.put('notifEveningHour',     s['eveningHour']);
+    await box.put('notifEveningMinute',   s['eveningMinute']);
+    await box.put('notifPreTaskEnabled',  s['preTaskEnabled']);
+  }
+
+  static Map<String, dynamic> getNotificationSettings() {
+    final box = Hive.box(_settingsBox);
+    return {
+      'morningEnabled':  box.get('notifMorningEnabled',  defaultValue: true),
+      'morningHour':     box.get('notifMorningHour',     defaultValue: 7),
+      'morningMinute':   box.get('notifMorningMinute',   defaultValue: 30),
+      'eveningEnabled':  box.get('notifEveningEnabled',  defaultValue: true),
+      'eveningHour':     box.get('notifEveningHour',     defaultValue: 21),
+      'eveningMinute':   box.get('notifEveningMinute',   defaultValue: 0),
+      'preTaskEnabled':  box.get('notifPreTaskEnabled',  defaultValue: true),
+    };
+  }
+
+  // ── Emergency contacts ────────────────────────────────────────────────────
+  static Future<void> saveEmergencyContacts(List<String> contacts) async {
+    final box = Hive.box(_settingsBox);
+    await box.put('emergencyContacts', contacts);
+  }
+
+  static List<String> getEmergencyContacts() {
+    final box = Hive.box(_settingsBox);
+    final raw = box.get('emergencyContacts', defaultValue: <String>[]);
+    return List<String>.from(raw as List);
   }
 
   // ── Clear all data ────────────────────────────────────────────────────────

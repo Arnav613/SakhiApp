@@ -92,13 +92,16 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
 
     // Stop recording and show where it was saved
     final path = await ShieldService.stopRecording();
-    setState(() => _recordingStarted = false);
-
     if (mounted && path != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Recording saved to device'),
+        content: const Text('Recording saved to app storage'),
         backgroundColor: SakhiColors.deep,
         behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'OK',
+          textColor: SakhiColors.gold,
+          onPressed: () {},
+        ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ));
     }
@@ -220,6 +223,14 @@ class _ShieldScreenState extends ConsumerState<ShieldScreen>
         actions: [IconButton(icon: const Icon(Icons.settings_outlined), onPressed: () => _showSettings(context))],
       ),
       body: Stack(children: [
+        // Invisible camera preview — needed for recording to work on some devices
+        if (ShieldService.cameraController != null &&
+            ShieldService.cameraController!.value.isInitialized)
+          Positioned(
+            left: -1, top: -1,
+            width: 1,  height: 1,
+            child: CameraPreview(ShieldService.cameraController!),
+          ),
         SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(children: [
