@@ -5,6 +5,7 @@ import 'package:sakhi/models/models.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
 import '../../widgets/shared_widgets.dart';
+import '../../services/storage_service.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -131,6 +132,9 @@ class _MorningCheckIn extends StatelessWidget {
   const _MorningCheckIn({required this.phase, required this.name});
 
   String get message {
+    final saved = StorageService.getLastCheckInMessage();
+    if (saved.isNotEmpty) return saved;
+    // Fallback if nothing saved yet
     switch (phase.index) {
       case 0: return "Energy may be lower today — that's okay. Prioritise your most important task early and give yourself grace for the rest.";
       case 1: return "Your mind is sharp and creative today. A great day to start something new, plan ahead, or pitch an idea.";

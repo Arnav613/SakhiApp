@@ -17,26 +17,56 @@ class EnergyScreen extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: SakhiColors.vblush,
-      appBar: AppBar(title: const Text('Energy Levels')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _EnergyBanner(cycle: cycle),
-            const SizedBox(height: 16),
-            const SakhiSectionHeader(title: "Today's tasks"),
-            const SizedBox(height: 10),
-            if (tasks.isEmpty)
-              const SakhiEmptyState(
-                emoji:    '✨',
-                title:    'No tasks today',
-                subtitle: 'Your calendar is clear — a good day to rest or plan ahead.',
-              )
-            else
-              ...tasks.map((task) => _EnergyTaskCard(task: task, phase: cycle.phase)),
-            const SizedBox(height: 80),
-          ],
+      appBar: AppBar(
+        title: const Text('Energy Levels'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh insights',
+            onPressed: () {
+              // Force rebuild by navigating away and back
+              // We use a key trick — just show a snackbar and let
+              // each card's initState re-run on next build
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('Refreshing insights...'),
+                backgroundColor: SakhiColors.sage,
+                duration: const Duration(seconds: 1),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ));
+              ref.read(tasksProvider.notifier).refresh();
+            },
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        color: SakhiColors.rose,
+        onRefresh: () => ref.read(tasksProvider.notifier).refresh(),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _EnergyBanner(cycle: cycle),
+              const SizedBox(height: 16),
+              const SakhiSectionHeader(title: "Today's tasks"),
+              const SizedBox(height: 10),
+              if (tasks.isEmpty)
+                const SakhiEmptyState(
+                  emoji:    '✨',
+                  title:    'No tasks today',
+                  subtitle: 'Your calendar is clear — a good day to rest or plan ahead.',
+                )
+              else
+                ...tasks.map((task) => _EnergyTaskCard(
+                  key:   ValueKey('${task.id}_${cycle.phase.name}'),
+                  task:  task,
+                  phase: cycle.phase,
+                )),
+              const SizedBox(height: 80),
+            ],
+          ),
         ),
       ),
     );
@@ -144,7 +174,7 @@ class _EnergyBar extends StatelessWidget {
 class _EnergyTaskCard extends StatefulWidget {
   final Task       task;
   final CyclePhase phase;
-  const _EnergyTaskCard({required this.task, required this.phase});
+  const _EnergyTaskCard({super.key, required this.task, required this.phase});
 
   @override
   State<_EnergyTaskCard> createState() => _EnergyTaskCardState();
@@ -362,10 +392,7 @@ _TaskEnergyInfo _energyForTask(String taskTitle, CyclePhase phase) {
           badgeColor: Color(0xFF1A5C36),
           expectation: 'Reflective thinking is heightened during menstruation. Admin and review tasks suit this energy.',
           tip: 'This is a genuinely good day for careful, methodical work. Trust your instincts on what needs changing.');
-      return const _TaskEnergyInfo(energyLabel: 'Low energy', emoji: '🌙',
-          badgeColor: Color(0xFF8B2560),
-          expectation: 'Energy reserves are lower. Expect to need more breaks than usual.',
-          tip: 'Do the most important part first, then rest. One focused hour beats four exhausted ones.');
+      return _fallbackForTask(taskTitle, phase);
 
     case CyclePhase.follicular:
       if (isCreative || isPresentation) return const _TaskEnergyInfo(energyLabel: 'Perfect timing', emoji: '⚡',
@@ -380,10 +407,7 @@ _TaskEnergyInfo _energyForTask(String taskTitle, CyclePhase phase) {
           badgeColor: Color(0xFF1A3A8A),
           expectation: 'Physical energy is increasing. Your body is ready to build strength and endurance.',
           tip: 'Gradually increase intensity this week. Recovery is better now — a good time to push a little harder.');
-      return const _TaskEnergyInfo(energyLabel: 'Rising', emoji: '📈',
-          badgeColor: Color(0xFF1A3A8A),
-          expectation: 'Energy and focus are building. Most tasks will feel more manageable than last week.',
-          tip: 'Use this window to start anything you\'ve been putting off. Starting is easiest when energy is rising.');
+      return _fallbackForTask(taskTitle, phase);
 
     case CyclePhase.ovulatory:
       if (isNegotiation || isPresentation) return const _TaskEnergyInfo(energyLabel: 'Ideal day', emoji: '🌟',
@@ -398,10 +422,7 @@ _TaskEnergyInfo _energyForTask(String taskTitle, CyclePhase phase) {
           badgeColor: Color(0xFF1A5C36),
           expectation: 'Physical strength and pain tolerance are both at their highest.',
           tip: 'Push for a personal best today if you want one. Your body is primed for peak performance.');
-      return const _TaskEnergyInfo(energyLabel: 'Peak energy', emoji: '⭐',
-          badgeColor: Color(0xFF1A5C36),
-          expectation: 'All energy dimensions are high. You\'ll feel motivated, clear-headed, and confident.',
-          tip: 'Do your most important work today. This window lasts about 48 hours — make the most of it.');
+      return _fallbackForTask(taskTitle, phase);
 
     case CyclePhase.luteal:
       if (isAdmin || isReview) return const _TaskEnergyInfo(energyLabel: 'Strong fit', emoji: '🎯',
@@ -424,9 +445,57 @@ _TaskEnergyInfo _energyForTask(String taskTitle, CyclePhase phase) {
           badgeColor: Color(0xFF7A4800),
           expectation: 'Your body may crave comfort foods — cravings are real and hormonally driven in this phase.',
           tip: 'Magnesium-rich foods like dark chocolate, nuts, and leafy greens genuinely help with late luteal symptoms.');
-      return const _TaskEnergyInfo(energyLabel: 'Steady', emoji: '🔋',
-          badgeColor: Color(0xFF7A4800),
-          expectation: 'Energy is steady but not high. Best for tasks requiring care and focus.',
-          tip: 'Work in focused blocks with proper breaks. Concentration can be strong in luteal phase — use that.');
+      return _fallbackForTask(taskTitle, phase);
+  }
+}
+
+// ── Varied fallback when no category matches ──────────────────────────────────
+_TaskEnergyInfo _fallbackForTask(String taskTitle, CyclePhase phase) {
+  final bucket = taskTitle.length % 4;
+  switch (phase) {
+    case CyclePhase.menstrual:
+      final e = ['Energy reserves are lower. Expect to need more breaks than usual.',
+        'Physical and mental stamina may be reduced — that is normal today.',
+        'Your body is working hard. Focus may come in shorter bursts.',
+        'Low energy day — quality over quantity is the right approach.'];
+      final t = ['Do the most important part first, then rest.',
+        'Break this into the smallest possible steps. Finishing one thing still counts.',
+        'Set a 25-minute focus timer, then take a real break.',
+        'Give yourself permission to do this at 70% today. Done beats perfect.'];
+      return _TaskEnergyInfo(energyLabel: 'Low energy', emoji: '🌙',
+          badgeColor: const Color(0xFF8B2560), expectation: e[bucket], tip: t[bucket]);
+    case CyclePhase.follicular:
+      final e = ['Energy and focus are building. Tasks feel more manageable this week.',
+        'Estrogen is rising — your brain is sharpening and motivation increasing.',
+        'A good day for tackling things you have been putting off.',
+        'Cognitive performance is improving. Complex tasks feel less daunting.'];
+      final t = ['Use this window to start anything you have been avoiding.',
+        'Push slightly further than you think you can — recovery is strong.',
+        'Set intentions and plan ahead — your forward thinking is sharp.',
+        'Take on something new. Your brain is primed to learn right now.'];
+      return _TaskEnergyInfo(energyLabel: 'Rising', emoji: '📈',
+          badgeColor: const Color(0xFF1A3A8A), expectation: e[bucket], tip: t[bucket]);
+    case CyclePhase.ovulatory:
+      final e = ['All energy dimensions are high. Motivated, clear-headed, and confident.',
+        'Peak window — strength, communication, and resilience are all elevated.',
+        'Your brain and body are both performing at their best.',
+        'High social and cognitive energy. This will feel easier than expected.'];
+      final t = ['Do your most important work today — this window lasts about 48 hours.',
+        'Speak up, take the lead, tackle something that has felt intimidating.',
+        'Schedule your hardest task into this window if you can.',
+        'Push for a result you have been building toward — the timing is on your side.'];
+      return _TaskEnergyInfo(energyLabel: 'Peak', emoji: '⭐',
+          badgeColor: const Color(0xFF1A5C36), expectation: e[bucket], tip: t[bucket]);
+    case CyclePhase.luteal:
+      final e = ['Energy is steady but not high. Best for tasks needing care and focus.',
+        'Detail-orientation is elevated. You may notice things others would miss.',
+        'Social energy is lower but analytical thinking is strong.',
+        'Concentration comes in bursts. Structured work suits this phase well.'];
+      final t = ['Work in focused blocks with proper breaks.',
+        'Trust your critical instincts today — if something feels off, it probably is.',
+        'Front-load your most important work in the morning when energy peaks.',
+        'Avoid over-scheduling. One deep piece of work beats five shallow ones.'];
+      return _TaskEnergyInfo(energyLabel: 'Steady', emoji: '🔋',
+          badgeColor: const Color(0xFF7A4800), expectation: e[bucket], tip: t[bucket]);
   }
 }
