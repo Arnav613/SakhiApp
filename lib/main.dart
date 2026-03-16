@@ -6,9 +6,14 @@ import 'theme/app_colors.dart';
 import 'providers/providers.dart';
 import 'screens/onboarding/onboarding_screen.dart';
 import 'screens/settings/main_nav.dart';
+import 'services/storage_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialise Hive before app launches
+  await StorageService.init();
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,

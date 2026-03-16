@@ -7,6 +7,7 @@ import '../cycle/cycle_screen.dart';
 import '../companion/companion_screen.dart';
 import '../journal/journal_screen.dart';
 import '../points/points_screen.dart';
+import 'settings_screen.dart';
 
 class MainNav extends ConsumerStatefulWidget {
   const MainNav({super.key});
@@ -25,6 +26,7 @@ class _MainNavState extends ConsumerState<MainNav> {
     _NavItem(icon: Icons.chat_bubble_outline,  activeIcon: Icons.chat_bubble_rounded,    label: 'Sakhi'),
     _NavItem(icon: Icons.book_outlined,        activeIcon: Icons.book_rounded,           label: 'Journal'),
     _NavItem(icon: Icons.star_outline_rounded, activeIcon: Icons.star_rounded,           label: 'Points'),
+    _NavItem(icon: Icons.settings_outlined, activeIcon: Icons.settings_rounded, label: 'Settings'),
   ];
 
   final List<Widget> _screens = const [
@@ -34,6 +36,7 @@ class _MainNavState extends ConsumerState<MainNav> {
     CompanionScreen(),
     JournalScreen(),
     PointsScreen(),
+    const SettingsScreen(),
   ];
 
   @override

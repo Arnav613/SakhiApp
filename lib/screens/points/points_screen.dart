@@ -348,7 +348,7 @@ class _MonthlyReportCard extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12.5, color: SakhiColors.gray, height: 1.5,
                 fontStyle: FontStyle.italic)),
-          ),
+          )
         ],
       ),
     );

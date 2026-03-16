@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
+import '../services/calendar_service.dart';
+import '../services/storage_service.dart';
 
 // ── Cycle state ───────────────────────────────────────────────────────────────
 class CycleState {
@@ -31,7 +33,35 @@ class CycleState {
 }
 
 class CycleNotifier extends StateNotifier<CycleState> {
-  CycleNotifier() : super(CycleState(lastPeriodStart: DateTime.now().subtract(const Duration(days: 13))));
+  CycleNotifier() : super(_loadInitialState()) {
+    // Recalculate day from last period date on app open
+    _recalculateDay();
+  }
+
+  static CycleState _loadInitialState() {
+    final saved = StorageService.getCycleData();
+    final phase = _phaseFromString(saved['phase'] as String);
+    return CycleState(
+      dayOfCycle:  saved['dayOfCycle']  as int,
+      cycleLength: saved['cycleLength'] as int,
+      phase:       phase,
+    );
+  }
+
+  void _recalculateDay() {
+    final saved       = StorageService.getCycleData();
+    final dateStr     = saved['lastPeriodStart'] as String;
+    if (dateStr.isEmpty) return;
+    final lastPeriod  = DateTime.parse(dateStr);
+    final day         = DateTime.now().difference(lastPeriod).inDays + 1;
+    CyclePhase phase;
+    if (day <= 5)       phase = CyclePhase.menstrual;
+    else if (day <= 13) phase = CyclePhase.follicular;
+    else if (day <= 16) phase = CyclePhase.ovulatory;
+    else                phase = CyclePhase.luteal;
+    state = state.copyWith(dayOfCycle: day, phase: phase);
+    _save();
+  }
 
   void logPeriodStart(DateTime date) {
     final day = DateTime.now().difference(date).inDays + 1;
@@ -40,16 +70,36 @@ class CycleNotifier extends StateNotifier<CycleState> {
     else if (day <= 13) phase = CyclePhase.follicular;
     else if (day <= 16) phase = CyclePhase.ovulatory;
     else                phase = CyclePhase.luteal;
-
     state = state.copyWith(
       lastPeriodStart: date,
       dayOfCycle:      day,
       phase:           phase,
     );
+    _save();
   }
 
   void updateCycleLength(int length) {
     state = state.copyWith(cycleLength: length);
+    _save();
+  }
+
+  void _save() {
+    StorageService.saveCycleData(
+      dayOfCycle:      state.dayOfCycle,
+      cycleLength:     state.cycleLength,
+      phase:           state.phase.name,
+      lastPeriodStart: state.lastPeriodStart?.toIso8601String() ?? '',
+    );
+  }
+
+  static CyclePhase _phaseFromString(String s) {
+    switch (s) {
+      case 'menstrual':  return CyclePhase.menstrual;
+      case 'follicular': return CyclePhase.follicular;
+      case 'ovulatory':  return CyclePhase.ovulatory;
+      case 'luteal':     return CyclePhase.luteal;
+      default:           return CyclePhase.ovulatory;
+    }
   }
 }
 
@@ -87,7 +137,9 @@ class ShieldState {
 }
 
 class ShieldNotifier extends StateNotifier<ShieldState> {
-  ShieldNotifier() : super(ShieldState());
+  ShieldNotifier() : super(ShieldState(
+    emergencyContacts: StorageService.getEmergencyContacts(),
+  ));
 
   void activate() {
     state = state.copyWith(isActive: true, activatedAt: DateTime.now());
@@ -104,11 +156,13 @@ class ShieldNotifier extends StateNotifier<ShieldState> {
   void addContact(String contact) {
     final updated = [...state.emergencyContacts, contact];
     state = state.copyWith(emergencyContacts: updated);
+    StorageService.saveEmergencyContacts(updated);
   }
 
   void removeContact(String contact) {
     final updated = state.emergencyContacts.where((c) => c != contact).toList();
     state = state.copyWith(emergencyContacts: updated);
+    StorageService.saveEmergencyContacts(updated);
   }
 }
 
@@ -146,21 +200,35 @@ final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>(
 );
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
+// ── Calendar-aware tasks provider ────────────────────────────────────────────
+final calendarLoadingProvider = StateProvider<bool>((ref) => false);
+final calendarPermissionProvider = StateProvider<bool>((ref) => false);
+
 final tasksProvider = StateNotifierProvider<TasksNotifier, List<Task>>(
-  (ref) => TasksNotifier(),
+      (ref) => TasksNotifier(),
 );
 
 class TasksNotifier extends StateNotifier<List<Task>> {
-  TasksNotifier() : super([
-    Task(id: '1', title: 'Team standup', time: DateTime.now().copyWith(hour: 9, minute: 30)),
-    Task(id: '2', title: 'Quarterly review', time: DateTime.now().copyWith(hour: 11, minute: 0)),
-    Task(id: '3', title: 'Lunch with Priya', time: DateTime.now().copyWith(hour: 13, minute: 0)),
-    Task(id: '4', title: 'Design review', time: DateTime.now().copyWith(hour: 15, minute: 30)),
-    Task(id: '5', title: 'Reply to emails', time: DateTime.now().copyWith(hour: 17, minute: 0)),
-  ]);
+  TasksNotifier() : super([]) {
+    _loadFromCalendar();
+  }
+
+  Future<void> _loadFromCalendar() async {
+    // Import this at top of providers.dart:
+    // import '../services/calendar_service.dart';
+    final tasks = await CalendarService.getTodaysTasks();
+    if (mounted) state = tasks;
+  }
+
+  Future<void> refresh() async {
+    final tasks = await CalendarService.getTodaysTasks();
+    if (mounted) state = tasks;
+  }
 
   void completeTask(String id) {
-    state = state.map((t) => t.id == id ? (t..completed = true) : t).toList();
+    state = state.map((t) =>
+    t.id == id ? (t..completed = !t.completed) : t
+    ).toList();
   }
 
   void rateTask(String id, int rating) {
@@ -174,28 +242,46 @@ final resilienceProvider = StateNotifierProvider<ResilienceNotifier, ResilienceD
 );
 
 class ResilienceNotifier extends StateNotifier<ResilienceData> {
-  ResilienceNotifier() : super(ResilienceData(
-    totalPoints:              340,
-    journalStreak:            5,
-    tasksCompletedThisCycle:  12,
-    weeklyPoints:             [20, 35, 40, 20, 60, 80, 45],
-  ));
+  ResilienceNotifier() : super(_load());
 
-  void addPoints(int points) {
-    state = ResilienceData(
-      totalPoints:              state.totalPoints + points,
-      journalStreak:            state.journalStreak,
-      tasksCompletedThisCycle:  state.tasksCompletedThisCycle + 1,
-      weeklyPoints:             state.weeklyPoints,
+  static ResilienceData _load() {
+    final saved = StorageService.getPoints();
+    return ResilienceData(
+      totalPoints:             saved['totalPoints']             as int,
+      journalStreak:           saved['journalStreak']           as int,
+      tasksCompletedThisCycle: saved['tasksCompletedThisCycle'] as int,
+      weeklyPoints:            saved['weeklyPoints']            as List<int>,
     );
   }
 
+  void addPoints(int points) {
+    final updated = ResilienceData(
+      totalPoints:             state.totalPoints + points,
+      journalStreak:           state.journalStreak,
+      tasksCompletedThisCycle: state.tasksCompletedThisCycle + 1,
+      weeklyPoints:            state.weeklyPoints,
+    );
+    state = updated;
+    _save();
+  }
+
   void incrementStreak() {
-    state = ResilienceData(
-      totalPoints:              state.totalPoints,
-      journalStreak:            state.journalStreak + 1,
-      tasksCompletedThisCycle:  state.tasksCompletedThisCycle,
-      weeklyPoints:             state.weeklyPoints,
+    final updated = ResilienceData(
+      totalPoints:             state.totalPoints,
+      journalStreak:           state.journalStreak + 1,
+      tasksCompletedThisCycle: state.tasksCompletedThisCycle,
+      weeklyPoints:            state.weeklyPoints,
+    );
+    state = updated;
+    _save();
+  }
+
+  void _save() {
+    StorageService.savePoints(
+      totalPoints:             state.totalPoints,
+      journalStreak:           state.journalStreak,
+      tasksCompletedThisCycle: state.tasksCompletedThisCycle,
+      weeklyPoints:            state.weeklyPoints,
     );
   }
 }
@@ -214,7 +300,13 @@ class JournalNotifier extends StateNotifier<List<JournalEntry>> {
 }
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
-final onboardingCompleteProvider = StateProvider<bool>((ref) => false);
+final onboardingCompleteProvider = StateProvider<bool>(
+      (ref) => StorageService.getOnboardingComplete(),
+);
 
 // ── User name ─────────────────────────────────────────────────────────────────
-final userNameProvider = StateProvider<String>((ref) => 'Ananya');
+final userNameProvider = StateProvider<String>(
+      (ref) => StorageService.getUserName().isNotEmpty
+      ? StorageService.getUserName()
+      : 'there',
+);

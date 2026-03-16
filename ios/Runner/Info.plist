@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<key>NSCalendarsUsageDescription</key>
+<string>Sakhi needs access to your calendar to give you phase-aware briefings before each task.</string>
+<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+<string>Sakhi needs access to your calendar to give you phase-aware briefings before each task.</string>
+<key>LSApplicationQueriesSchemes</key>
+<array>
+  <string>sms</string>
+  <string>tel</string>
+</array>
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>

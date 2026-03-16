@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../services/storage_service.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
 import '../../models/models.dart';
@@ -43,6 +44,17 @@ class _JournalScreenState extends ConsumerState<JournalScreen>
       notes: _notesCtrl.text,
       phase: cycle.phase,
     ));
+
+    // Save to Hive
+    StorageService.saveJournalEntry(
+      date:        DateTime.now().toIso8601String(),
+      phase:       cycle.phase.name,
+      notes:       _notesCtrl.text,
+      taskRatings: tasks.where((t) => t.rating != null).map((t) => {
+        'title':  t.title,
+        'rating': t.rating,
+      }).toList(),
+    );
 
     // Award Resilience Points
     final completed  = tasks.where((t) => t.rating != null).length;

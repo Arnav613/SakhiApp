@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../services/storage_service.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
 
@@ -49,7 +50,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final name = _nameCtrl.text.trim();
     if (name.isNotEmpty) {
       ref.read(userNameProvider.notifier).state = name;
+      StorageService.saveUserName(name);
     }
+    StorageService.saveOnboardingComplete(true);
     ref.read(onboardingCompleteProvider.notifier).state = true;
   }
 
