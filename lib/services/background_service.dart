@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'notification_service.dart';
 import 'storage_service.dart';
-import 'claude_service.dart';
+import 'claude_service.dart' hide CycleState;
 import '../models/models.dart';
 import '../providers/providers.dart';
 
