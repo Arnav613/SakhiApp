@@ -79,24 +79,99 @@ class _CompanionScreenState extends ConsumerState<CompanionScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              itemCount: messages.length + (_isTyping ? 1 : 0),
-              itemBuilder: (ctx, i) {
-                if (i == messages.length && _isTyping) return const _TypingIndicator();
-                return _MessageBubble(message: messages[i]);
-              },
-            ),
+      body: _buildBody(messages, context),
+    );
+  }
+
+  Widget _buildBody(List<ChatMessage> messages, BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            itemCount: messages.length + (_isTyping ? 1 : 0),
+            itemBuilder: (ctx, i) {
+              if (i == messages.length && _isTyping) return const _TypingIndicator();
+              return _MessageBubble(message: messages[i]);
+            },
           ),
-          if (messages.length <= 1)
-            _QuickPrompts(onTap: (p) { _ctrl.text = p; _send(); }),
-          _InputBar(ctrl: _ctrl, onSend: _send),
-        ],
-      ),
+        ),
+        if (messages.length <= 1)
+          _QuickPrompts(onTap: (p) { _ctrl.text = p; _send(); }),
+        _InputBar(ctrl: _ctrl, onSend: _send),
+      ],
+    );
+  }
+}
+
+// ── Standalone body widget used by the floating overlay ──────────────────────
+class CompanionBody extends ConsumerStatefulWidget {
+  const CompanionBody({super.key});
+
+  @override
+  ConsumerState<CompanionBody> createState() => _CompanionBodyState();
+}
+
+class _CompanionBodyState extends ConsumerState<CompanionBody> {
+  final TextEditingController _ctrl   = TextEditingController();
+  final ScrollController      _scroll = ScrollController();
+  bool _isTyping = false;
+  final List<Map<String, String>> _history = [];
+
+  Future<void> _send() async {
+    final text = _ctrl.text.trim();
+    if (text.isEmpty) return;
+    _ctrl.clear();
+    ref.read(chatProvider.notifier).addMessage(text, true);
+    _history.add({'role': 'user', 'content': text});
+    setState(() => _isTyping = true);
+    _scrollToBottom();
+
+    final response = await ClaudeService.sendMessage(
+      userMessage: text,
+      history:     _history,
+      cycle:       ref.read(cycleProvider),
+      tasks:       ref.read(tasksProvider),
+      userName:    ref.read(userNameProvider),
+    );
+    _history.add({'role': 'assistant', 'content': response});
+    if (mounted) {
+      ref.read(chatProvider.notifier).addSakhiResponse(response);
+      setState(() => _isTyping = false);
+      _scrollToBottom();
+    }
+  }
+
+  void _scrollToBottom() {
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (_scroll.hasClients) {
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final messages = ref.watch(chatProvider);
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            itemCount: messages.length + (_isTyping ? 1 : 0),
+            itemBuilder: (ctx, i) {
+              if (i == messages.length && _isTyping) return const _TypingIndicator();
+              return _MessageBubble(message: messages[i]);
+            },
+          ),
+        ),
+        if (messages.length <= 1)
+          _QuickPrompts(onTap: (p) { _ctrl.text = p; _send(); }),
+        _InputBar(ctrl: _ctrl, onSend: _send),
+      ],
     );
   }
 }

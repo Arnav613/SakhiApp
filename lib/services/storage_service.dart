@@ -145,6 +145,23 @@ class StorageService {
     return box.get('lastCheckInMessage', defaultValue: '') as String;
   }
 
+  // ── Cycle records (for health pattern detection) ─────────────────────────
+  static Future<void> saveCycleRecord(Map<String, dynamic> record) async {
+    final box     = Hive.box(_cycleBox);
+    final records = getCycleRecords();
+    records.insert(0, record);
+    final trimmed = records.take(12).toList(); // keep last 12 cycles
+    await box.put('cycleRecords', trimmed);
+  }
+
+  static List<Map<String, dynamic>> getCycleRecords() {
+    final box = Hive.box(_cycleBox);
+    final raw = box.get('cycleRecords');
+    if (raw == null) return [];
+    return List<Map<String, dynamic>>.from(
+        (raw as List).map((e) => Map<String, dynamic>.from(e as Map)));
+  }
+
   // ── Notification settings ─────────────────────────────────────────────────
   static Future<void> saveNotificationSettings(Map<String, dynamic> s) async {
     final box = Hive.box(_settingsBox);

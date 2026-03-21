@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:sakhi/models/models.dart';
 import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
+import '../../models/models.dart';
 import '../../widgets/shared_widgets.dart';
-import '../../services/storage_service.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -27,7 +26,7 @@ class HomeScreen extends ConsumerWidget {
         slivers: [
           // ── App bar ──────────────────────────────────────────────────────
           SliverAppBar(
-            expandedHeight: 160,
+            expandedHeight: 150,
             pinned: true,
             backgroundColor: SakhiColors.deep,
             flexibleSpace: FlexibleSpaceBar(
@@ -52,14 +51,14 @@ class HomeScreen extends ConsumerWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text('$greeting, $name 🌸',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 20, fontWeight: FontWeight.w700)),
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20, fontWeight: FontWeight.w700)),
                                 const SizedBox(height: 4),
                                 Text(DateFormat('EEEE, d MMMM').format(now),
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.65),
-                                    fontSize: 13)),
+                                    style: TextStyle(
+                                        color: Colors.white.withOpacity(0.65),
+                                        fontSize: 13)),
                               ],
                             ),
                             // Points pill
@@ -75,9 +74,9 @@ class HomeScreen extends ConsumerWidget {
                                   const Icon(Icons.star_rounded, color: SakhiColors.gold, size: 16),
                                   const SizedBox(width: 4),
                                   Text('${points.totalPoints}',
-                                    style: const TextStyle(
-                                      color: SakhiColors.gold,
-                                      fontSize: 13, fontWeight: FontWeight.w700)),
+                                      style: const TextStyle(
+                                          color: SakhiColors.gold,
+                                          fontSize: 13, fontWeight: FontWeight.w700)),
                                 ],
                               ),
                             ),
@@ -126,15 +125,12 @@ class HomeScreen extends ConsumerWidget {
 
 // ── Morning check-in card ─────────────────────────────────────────────────────
 class _MorningCheckIn extends StatelessWidget {
-  final CyclePhase phase;
+  final dynamic phase;
   final String name;
 
   const _MorningCheckIn({required this.phase, required this.name});
 
   String get message {
-    final saved = StorageService.getLastCheckInMessage();
-    if (saved.isNotEmpty) return saved;
-    // Fallback if nothing saved yet
     switch (phase.index) {
       case 0: return "Energy may be lower today — that's okay. Prioritise your most important task early and give yourself grace for the rest.";
       case 1: return "Your mind is sharp and creative today. A great day to start something new, plan ahead, or pitch an idea.";
@@ -170,15 +166,15 @@ class _MorningCheckIn extends StatelessWidget {
                   border: Border.all(color: SakhiColors.gold.withOpacity(0.4)),
                 ),
                 child: const Text('Sakhi says',
-                  style: TextStyle(color: SakhiColors.gold, fontSize: 11, fontWeight: FontWeight.w600)),
+                    style: TextStyle(color: SakhiColors.gold, fontSize: 11, fontWeight: FontWeight.w600)),
               ),
             ],
           ),
           const SizedBox(height: 10),
           Text(message,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
-              fontSize: 14, height: 1.6)),
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.9),
+                  fontSize: 14, height: 1.6)),
         ],
       ),
     );
@@ -220,11 +216,11 @@ class _CycleRingCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text('$dayOfCycle',
-                      style: const TextStyle(
-                        fontSize: 22, fontWeight: FontWeight.w700,
-                        color: SakhiColors.deep)),
+                        style: const TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w700,
+                            color: SakhiColors.deep)),
                     const Text('/ 28',
-                      style: TextStyle(fontSize: 10, color: SakhiColors.lgray)),
+                        style: TextStyle(fontSize: 10, color: SakhiColors.lgray)),
                   ],
                 ),
               ],
@@ -236,15 +232,15 @@ class _CycleRingCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(phase.label,
-                  style: const TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
+                    style: const TextStyle(
+                        fontSize: 17, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
                 const SizedBox(height: 3),
                 Text(phase.days,
-                  style: const TextStyle(fontSize: 12, color: SakhiColors.lgray)),
+                    style: const TextStyle(fontSize: 12, color: SakhiColors.lgray)),
                 const SizedBox(height: 6),
                 Text(phase.tagline,
-                  style: const TextStyle(
-                    fontSize: 13, color: SakhiColors.rose, fontWeight: FontWeight.w500)),
+                    style: const TextStyle(
+                        fontSize: 13, color: SakhiColors.rose, fontWeight: FontWeight.w500)),
               ],
             ),
           ),
@@ -284,20 +280,20 @@ class _TaskTile extends ConsumerWidget {
                 ),
               ),
               child: task.completed
-                ? const Icon(Icons.check, color: Colors.white, size: 13)
-                : null,
+                  ? const Icon(Icons.check, color: Colors.white, size: 13)
+                  : null,
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(task.title,
-              style: TextStyle(
-                fontSize:           14,
-                fontWeight:         FontWeight.w500,
-                color:              task.completed ? SakhiColors.lgray : SakhiColors.deep,
-                decoration:         task.completed ? TextDecoration.lineThrough : null,
-                decorationColor:    SakhiColors.lgray,
-              )),
+                style: TextStyle(
+                  fontSize:           14,
+                  fontWeight:         FontWeight.w500,
+                  color:              task.completed ? SakhiColors.lgray : SakhiColors.deep,
+                  decoration:         task.completed ? TextDecoration.lineThrough : null,
+                  decorationColor:    SakhiColors.lgray,
+                )),
           ),
           Text(
             '${task.time.hour}:${task.time.minute.toString().padLeft(2, '0')}',
@@ -326,11 +322,11 @@ class _StreakCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('$streak day journal streak',
-                style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700, color: SakhiColors.deep)),
               const SizedBox(height: 2),
               const Text('Keep it up — journal again tonight',
-                style: TextStyle(fontSize: 12, color: SakhiColors.lgray)),
+                  style: TextStyle(fontSize: 12, color: SakhiColors.lgray)),
             ],
           ),
         ],

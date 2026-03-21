@@ -5,6 +5,8 @@ import '../../theme/app_colors.dart';
 import '../../providers/providers.dart';
 import '../../models/models.dart';
 import '../../widgets/shared_widgets.dart';
+import '../../widgets/health_alerts_widget.dart';
+import '../../widgets/symptom_log_sheet.dart';
 
 class CycleScreen extends ConsumerStatefulWidget {
   const CycleScreen({super.key});
@@ -56,6 +58,12 @@ class _CycleScreenState extends ConsumerState<CycleScreen> {
 
             // ── Legend ────────────────────────────────────────────────
             _Legend(),
+            const SizedBox(height: 16),
+
+            // ── Health alerts ─────────────────────────────────────────
+            const SakhiSectionHeader(title: 'Health patterns'),
+            const SizedBox(height: 10),
+            const HealthAlertsSection(),
             const SizedBox(height: 16),
 
             // ── Log period button ─────────────────────────────────────
@@ -458,17 +466,35 @@ class _LogPeriodButton extends ConsumerWidget {
               child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
+              final previous = ref.read(cycleProvider);
               ref.read(cycleProvider.notifier).logPeriodStart(date);
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: Text('Period logged — cycle reset from ${DateFormat('d MMM').format(date)}'),
-                backgroundColor: SakhiColors.menstrualDark,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ));
+              // Show symptom logging sheet
+              showModalBottomSheet(
+                context:            context,
+                isScrollControlled: true,
+                backgroundColor:    Colors.transparent,
+                builder: (_) => SymptomLogSheet(
+                  periodStartDate:      date,
+                  previousCycleLength: previous.lastPeriodStart != null
+                      ? DateTime.now().difference(previous.lastPeriodStart!).inDays
+                      : null,
+                  onSaved: () {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('Period logged from ${DateFormat('d MMM').format(date)}'),
+                      backgroundColor: SakhiColors.menstrualDark,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ));
+                  },
+                ),
+              );
             },
-            style: ElevatedButton.styleFrom(backgroundColor: SakhiColors.menstrualDark),
-            child: const Text('Log period', style: TextStyle(color: Colors.white)),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: SakhiColors.menstrualDark),
+            child: const Text('Log period',
+                style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
